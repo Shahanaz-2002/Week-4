@@ -1,5 +1,8 @@
 # main.py
 
+import time
+from typing import Dict
+
 from embedding import EmbeddingEngine
 from similarity_engine import SimilarityEngine
 from insight_generator import InsightGenerator
@@ -9,6 +12,7 @@ from utils import (
     format_output,
     log
 )
+from config import CSV_DATA_PATH, EMBEDDING_DIM, TOP_K
 
 
 # ---------------------------------------------------
@@ -17,61 +21,129 @@ from utils import (
 
 def main():
 
-    log("Loading case database...")
-    case_database = load_case_database(r"D:\chiselon\Week 0\Week_0_Prep_Week_Ssample Data_clinic_cases.csv")
+    try:
+        start_time = time.time()
 
-    log("Initializing embedding engine...")
-    embedding_engine = EmbeddingEngine(embedding_dim=128)
+        # ---------------------------------------------------
+        # Step 1: Load Case Database
+        # ---------------------------------------------------
 
-    log("Generating embeddings for case database...")
-    case_embeddings = {}
+        log("Loading case database...")
+        case_database: Dict = load_case_database(CSV_DATA_PATH)
 
-    for case_id, case_data in case_database.items():
-        embedding = embedding_engine.generate_embedding(case_data)
-        case_embeddings[case_id] = embedding
+        if not case_database:
+            log("No cases found in database. Exiting.")
+            return
 
-    log("Initializing similarity engine...")
-    similarity_engine = SimilarityEngine(case_embeddings)
+        # ---------------------------------------------------
+        # Step 2: Initialize Embedding Engine
+        # ---------------------------------------------------
 
-    log("Initializing insight generator...")
-    insight_generator = InsightGenerator(case_database)
+        log("Initializing embedding engine...")
+        embedding_engine = EmbeddingEngine(embedding_dim=EMBEDDING_DIM)
 
-    # ---------------------------------------------------
-    # Example New Patient (Replace Later with API Input)
-    # ---------------------------------------------------
+        # ---------------------------------------------------
+        # Step 3: Precompute Case Embeddings
+        # ---------------------------------------------------
 
-    new_case = {
-        "case_id": "NEW001",
-        "symptoms": ["chest pain", "shortness of breath"],
-        "diagnosis": "",
-        "notes": "Patient reports fatigue and mild dizziness."
-    }
+        log("Generating embeddings for case database...")
+        case_embeddings = {}
 
-    # Validate Input
-    validate_case_input(new_case)
+        for case_id, case_data in case_database.items():
+            embedding = embedding_engine.generate_embedding(case_data)
+            case_embeddings[case_id] = embedding
 
-    log("Generating query embedding...")
-    query_embedding = embedding_engine.generate_embedding(new_case)
+        # ---------------------------------------------------
+        # Step 4: Initialize Similarity Engine
+        # ---------------------------------------------------
 
-    log("Retrieving top similar cases...")
-    top_matches = similarity_engine.retrieve_top_k(
-        query_embedding,
-        top_k=3
-    )
+        log("Initializing similarity engine...")
+        similarity_engine = SimilarityEngine(case_embeddings)
 
-    log("Generating clinical insight...")
-    insight = insight_generator.generate_insight(top_matches)
+        # ---------------------------------------------------
+        # Step 5: Initialize Insight Generator
+        # ---------------------------------------------------
 
-    # Format Output
-    final_output = format_output(
-        query_case_id=new_case["case_id"],
-        top_matches=top_matches,
-        insight=insight
-    )
+        log("Initializing insight generator...")
+        insight_generator = InsightGenerator(case_database)
 
-    log("Pipeline completed successfully.\n")
+        # ---------------------------------------------------
+        # Step 6: Day 5 Simulation Mode (Multiple Test Cases)
+        # ---------------------------------------------------
 
-    print(final_output)
+        test_cases = [
+            {
+                "case_id": "NEW001",
+                "symptoms": ["chest pain", "shortness of breath"],
+                "diagnosis": "",
+                "notes": "Patient reports fatigue and mild dizziness."
+            },
+            {
+                "case_id": "NEW002",
+                "symptoms": ["fever", "cough"],
+                "diagnosis": "",
+                "notes": "Symptoms persistent for 5 days."
+            },
+            {
+                "case_id": "NEW003",
+                "symptoms": ["headache", "blurred vision"],
+                "diagnosis": "",
+                "notes": "Intermittent pain, worsens in evening."
+            }
+        ]
+
+        # ---------------------------------------------------
+        # Step 7: Process Each Simulated Case
+        # ---------------------------------------------------
+
+        for new_case in test_cases:
+
+            log(f"\nProcessing Case: {new_case['case_id']}")
+
+            # Validate Input
+            validate_case_input(new_case)
+
+            # Generate Query Embedding
+            log("Generating query embedding...")
+            query_embedding = embedding_engine.generate_embedding(new_case)
+
+            # Retrieve Top-K Similar Cases
+            log("Retrieving top similar cases...")
+            top_matches = similarity_engine.retrieve_top_k(
+                query_embedding,
+                top_k=TOP_K
+            )
+
+            # Generate Insight (FIXED unpacking)
+            log("Generating clinical insight...")
+            insight_summary, confidence_reason = (
+                insight_generator.generate_insight(top_matches)
+            )
+
+            # Format Output (Fixed structure)
+            final_output = format_output(
+                query_case_id=new_case["case_id"],
+                top_matches=top_matches,
+                insight={
+                    "insight_summary": insight_summary,
+                    "confidence_note": confidence_reason
+                }
+            )
+
+            print(final_output)
+
+        # ---------------------------------------------------
+        # Step 8: Performance Measurement (Day 5 Requirement)
+        # ---------------------------------------------------
+
+        end_time = time.time()
+        total_time = end_time - start_time
+        log(f"Total Execution Time: {total_time:.4f} seconds")
+
+        log("Pipeline completed successfully.")
+
+    except Exception as e:
+        log(f"System Error: {str(e)}")
 
 
 # ---------------------------------------------------

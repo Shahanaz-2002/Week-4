@@ -1,63 +1,150 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
-from typing import List
-
+from fastapi import FastAPI, HTTPException
+from typing import Dict
+import time
+from models import CaseRequest, CaseResponse, SimilarCase, SystemMetrics
 from embedding import EmbeddingEngine
 from similarity_engine import SimilarityEngine
 from insight_generator import InsightGenerator
-from utils import load_case_database, validate_case_input
-
-app = FastAPI()
-
-# Load database once
-case_database = load_case_database(
-    r"D:\chiselon\Week 0\Week_0_Prep_Week_Ssample Data_clinic_cases.csv"
-)
-
-embedding_engine = EmbeddingEngine(embedding_dim=128)
-
-case_embeddings = {}
-for case_id, case_data in case_database.items():
-    case_embeddings[case_id] = embedding_engine.generate_embedding(case_data)
-
-similarity_engine = SimilarityEngine(case_embeddings)
-insight_generator = InsightGenerator(case_database)
+from database import fetch_case_database
+from config import TOP_K, EMBEDDING_DIM
 
 
-class CaseRequest(BaseModel):
-    symptoms: List[str]
-    doctor_notes: str
+app = FastAPI(title="CCMS AI Similarity Engine")
 
 
-@app.post("/analyze-case")
+# ---------------------------------------------------
+# Global System State
+# ---------------------------------------------------
+
+embedding_engine = EmbeddingEngine(embedding_dim=EMBEDDING_DIM)
+case_database: Dict = {}
+similarity_engine: SimilarityEngine = None
+insight_generator: InsightGenerator = None
+response_cache = {}
+
+
+# ---------------------------------------------------
+# Startup Initialization
+# ---------------------------------------------------
+
+@app.on_event("startup")
+def initialize_system():
+
+    global case_database, similarity_engine, insight_generator
+
+    case_database = fetch_case_database()
+
+    if not case_database:
+        print("⚠ No cases found in database.")
+        return
+
+    case_embeddings = {}
+
+    for case_id, case_data in case_database.items():
+        embedding = embedding_engine.generate_embedding(case_data)
+        case_embeddings[case_id] = embedding
+
+    similarity_engine = SimilarityEngine(case_embeddings)
+    insight_generator = InsightGenerator(case_database)
+
+    print("✅ System initialized successfully.")
+
+
+# ---------------------------------------------------
+# Helper: Convert Confidence Text → Quality Label
+# ---------------------------------------------------
+
+def determine_output_quality(confidence_reason: str) -> str:
+
+    if "High" in confidence_reason:
+        return "High"
+    elif "Moderate" in confidence_reason:
+        return "Moderate"
+    else:
+        return "Low"
+
+
+# ---------------------------------------------------
+# Main API Endpoint
+# ---------------------------------------------------
+
+@app.post("/analyze-case", response_model=CaseResponse)
 def analyze_case(request: CaseRequest):
 
-    new_case = {
-        "symptoms": request.symptoms,
-        "notes": request.doctor_notes,
-        "diagnosis": ""
-    }
+    start_time = time.time()
 
-    validate_case_input(new_case)
+    request_key = str(request.symptoms) + request.doctor_notes
 
-    query_embedding = embedding_engine.generate_embedding(new_case)
+    # -------- CACHE CHECK --------
+    if request_key in response_cache:
+        return response_cache[request_key]
 
-    top_matches = similarity_engine.retrieve_top_k(
-        query_embedding,
-        top_k=3
-    )
+    try:
 
-    insight = insight_generator.generate_insight(top_matches)
+        if not case_database or similarity_engine is None:
+            raise HTTPException(
+                status_code=500,
+                detail="System not initialized properly."
+            )
 
-    return {
-        "top_similar_cases": [
-            {
-                "case_id": case_id,
-                "similarity_score": score
-            }
+        new_case = {
+            "symptoms": request.symptoms,
+            "diagnosis": "",
+            "notes": request.doctor_notes,
+        }
+
+        # Step 1: Generate embedding
+        query_embedding = embedding_engine.generate_embedding(new_case)
+
+        # Step 2: Retrieve similar cases
+        top_matches = similarity_engine.retrieve_top_k(
+            query_embedding,
+            top_k=TOP_K
+        )
+
+        similar_cases = [
+            SimilarCase(
+                case_id=case_id,
+                similarity_score=score
+            )
             for case_id, score in top_matches
-        ],
-        "predicted_diagnosis": insight["most_common_diagnosis"],
-        "suggested_treatment": insight["recommended_treatment"],
-        "confidence": insight["confidence_note"]
-    }
+        ]
+
+        # Step 3: Generate insight
+        insight_summary, confidence_reason = (
+            insight_generator.generate_insight(top_matches)
+        )
+
+        # Step 4: Measure Response Time
+        end_time = time.time()
+        response_time_ms = (end_time - start_time) * 1000
+
+        # Step 5: Determine Output Quality
+        output_quality = determine_output_quality(confidence_reason)
+
+        system_metrics = SystemMetrics(
+            response_time_ms=round(response_time_ms, 2),
+            output_quality=output_quality
+        )
+
+        response = CaseResponse(
+            similar_cases=similar_cases,
+            insight_summary=insight_summary,
+            confidence_reason=confidence_reason,
+            system_metrics=system_metrics
+        )
+
+        response_cache[request_key] = response
+
+        return response
+
+    except Exception:
+        return CaseResponse(
+            similar_cases=[],
+            insight_summary="System error occurred.",
+            confidence_reason="Unable to compute similarity.",
+            system_metrics=SystemMetrics(
+                response_time_ms=0.0,
+                output_quality="Error"
+            )
+        )

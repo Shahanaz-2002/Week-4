@@ -1,22 +1,12 @@
 # insight_generator.py
 
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple
 from collections import Counter
 
 
 class InsightGenerator:
-    """
-    Responsible ONLY for converting ranked similar cases
-    into structured clinical insight.
-    """
 
-    def __init__(self, case_database: Dict[str, Dict[str, Any]]):
-        """
-        Parameters:
-        -----------
-        case_database : dict
-            Dictionary of {case_id: full_case_data}
-        """
+    def __init__(self, case_database: Dict[str, Dict]):
         self.case_database = case_database
 
     # ---------------------------------------------------
@@ -26,22 +16,23 @@ class InsightGenerator:
     def generate_insight(
         self,
         top_matches: List[Tuple[str, float]]
-    ) -> Dict[str, Any]:
-        """
-        Generate structured insight from top matched cases.
+    ) -> Tuple[str, str]:
 
-        Returns:
-        --------
-        {
-            "recommended_treatment": str,
-            "most_common_diagnosis": str,
-            "confidence_note": str
-        }
-        """
+        # ---------------------------------------------------
+        # Case 1: No Similar Cases Found
+        # ---------------------------------------------------
+        if not top_matches:
+            return (
+                "No similar historical cases found.",
+                "Insufficient similarity data."
+            )
 
         diagnoses = []
         treatments = []
 
+        # ---------------------------------------------------
+        # Collect Diagnosis & Treatment
+        # ---------------------------------------------------
         for case_id, score in top_matches:
             case_data = self.case_database.get(case_id, {})
 
@@ -57,36 +48,85 @@ class InsightGenerator:
         most_common_diagnosis = self._most_common(diagnoses)
         recommended_treatment = self._most_common(treatments)
 
-        return {
-            "most_common_diagnosis": most_common_diagnosis,
-            "recommended_treatment": recommended_treatment,
-            "confidence_note": self._generate_confidence_note(top_matches)
-        }
+        # ---------------------------------------------------
+        # Smart Summary Generation (Improved)
+        # ---------------------------------------------------
+        summary = self._generate_summary(
+            most_common_diagnosis,
+            recommended_treatment
+        )
+
+        # ---------------------------------------------------
+        # Confidence Calculation
+        # ---------------------------------------------------
+        confidence = self._generate_confidence(top_matches)
+
+        return summary, confidence
 
     # ---------------------------------------------------
-    # Private Methods
+    # Helper: Generate Summary
+    # ---------------------------------------------------
+
+    @staticmethod
+    def _generate_summary(
+        diagnosis: str,
+        treatment: str
+    ) -> str:
+
+        if diagnosis == "insufficient data" and treatment == "insufficient data":
+            return (
+                "Similar cases were identified, but structured diagnosis "
+                "and treatment data are not available for recommendation."
+            )
+
+        if diagnosis != "insufficient data" and treatment == "insufficient data":
+            return (
+                f"In similar past cases, patients were commonly diagnosed with "
+                f"{diagnosis}. Treatment patterns were not consistently recorded."
+            )
+
+        if diagnosis == "insufficient data" and treatment != "insufficient data":
+            return (
+                f"In similar past cases, patients responded well to "
+                f"{treatment}, although diagnosis data was limited."
+            )
+
+        return (
+            f"In similar past cases, patients were commonly diagnosed with "
+            f"{diagnosis} and responded well to {treatment}."
+        )
+
+    # ---------------------------------------------------
+    # Helper: Most Common Item
     # ---------------------------------------------------
 
     @staticmethod
     def _most_common(items: List[str]) -> str:
         if not items:
-            return "Insufficient data"
+            return "insufficient data"
+        return Counter(items).most_common(1)[0][0]
 
-        counter = Counter(items)
-        return counter.most_common(1)[0][0]
+    # ---------------------------------------------------
+    # Helper: Confidence Score (Improved)
+    # ---------------------------------------------------
 
     @staticmethod
-    def _generate_confidence_note(
+    def _generate_confidence(
         top_matches: List[Tuple[str, float]]
     ) -> str:
+
         if not top_matches:
-            return "No similar historical cases found."
+            return "Insufficient similarity data."
 
-        avg_score = sum(score for _, score in top_matches) / len(top_matches)
+        scores = [score for _, score in top_matches]
 
-        if avg_score > 0.85:
+        avg_score = sum(scores) / len(scores)
+        max_score = max(scores)
+
+        # Confidence decision using both avg and strongest match
+        if avg_score > 0.85 and max_score > 0.9:
             return "High confidence based on strong similarity with historical cases."
         elif avg_score > 0.65:
             return "Moderate confidence based on similarity patterns."
         else:
-            return "Low similarity confidence. Consider additional clinical evaluation."
+            return "Low similarity confidence. Clinical review advised."

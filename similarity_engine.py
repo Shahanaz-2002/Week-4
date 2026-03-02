@@ -29,38 +29,43 @@ class SimilarityEngine:
         top_k: int = 3
     ) -> List[Tuple[str, float]]:
         """
-        Compute similarity between query embedding and
-        all stored case embeddings.
+        Compute cosine similarity between query embedding
+        and all stored case embeddings.
 
         Returns:
         --------
         List of (case_id, similarity_score) sorted descending.
         """
 
+        if not self.case_embeddings:
+            return []
+
         similarities = []
 
-        for case_id, embedding in self.case_embeddings.items():
-            score = self._cosine_similarity(query_embedding, embedding)
-            similarities.append((case_id, float(score)))
+        # Precompute query norm once
+        query_norm = np.linalg.norm(query_embedding)
 
-        # Sort in descending order
+        if query_norm == 0:
+            return []
+
+        for case_id, embedding in self.case_embeddings.items():
+
+            emb_norm = np.linalg.norm(embedding)
+
+            if emb_norm == 0:
+                score = 0.0
+            else:
+                score = float(
+                    np.dot(query_embedding, embedding)
+                    / (query_norm * emb_norm)
+                )
+
+            similarities.append((case_id, score))
+
+        # Sort descending
         similarities.sort(key=lambda x: x[1], reverse=True)
 
+        # Ensure top_k does not exceed available cases
+        top_k = min(top_k, len(similarities))
+
         return similarities[:top_k]
-
-    # ---------------------------------------------------
-    # Private Methods
-    # ---------------------------------------------------
-
-    @staticmethod
-    def _cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
-        """
-        Compute cosine similarity between two vectors.
-        """
-
-        if np.linalg.norm(vec1) == 0 or np.linalg.norm(vec2) == 0:
-            return 0.0
-
-        return np.dot(vec1, vec2) / (
-            np.linalg.norm(vec1) * np.linalg.norm(vec2)
-        )
