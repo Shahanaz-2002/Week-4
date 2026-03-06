@@ -4,3 +4,7 @@ pydantic
 numpy
 scikit-learn
 pymongo
+sentencepiece
+torch
+transformers
+accelerate
